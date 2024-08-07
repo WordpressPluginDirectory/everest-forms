@@ -158,11 +158,12 @@ abstract class EVF_Form_Fields_Upload extends EVF_Form_Fields {
 		$this->field_id   = $validated_form_field['field_id'];
 		$this->field_data = $this->form_data['form_fields'][ $this->field_id ];
 
-		$error     = empty( $_FILES['file']['error'] ) ? UPLOAD_ERR_OK : intval( $_FILES['file']['error'] );
-		$path      = $_FILES['file']['tmp_name']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.InputNotValidated
-		$name      = sanitize_file_name( wp_unslash( $_FILES['file']['name'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotValidated
-		$extension = strtolower( pathinfo( $name, PATHINFO_EXTENSION ) );
-		$errors    = $this->ajax_validate( $error, $extension, $path, $name );
+		$error        = empty( $_FILES['file']['error'] ) ? UPLOAD_ERR_OK : intval( $_FILES['file']['error'] );
+		$path         = $_FILES['file']['tmp_name']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.InputNotValidated
+		$name         = sanitize_file_name( wp_unslash( $_FILES['file']['name'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotValidated
+		$extension    = strtolower( pathinfo( $name, PATHINFO_EXTENSION ) );
+		$errors       = $this->ajax_validate( $error, $extension, $path, $name );
+		$name_of_file = isset( $this->field_data['custom_file_name'] ) ? sanitize_file_name( $this->field_data['custom_file_name'] ) . '_' . uniqid( '', true ) . '.' . $extension : sanitize_file_name( wp_unslash( $_FILES['file']['name'] ) );  // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotValidated
 
 		if ( count( $errors ) ) {
 			wp_send_json_error( implode( ',', $errors ), 400 );
@@ -182,7 +183,7 @@ abstract class EVF_Form_Fields_Upload extends EVF_Form_Fields {
 		wp_send_json_success(
 			array(
 				'file' => pathinfo( $tmp, PATHINFO_FILENAME ) . '.' . pathinfo( $tmp, PATHINFO_EXTENSION ),
-				'name' => $name,
+				'name' => $name_of_file,
 			)
 		);
 	}
@@ -515,6 +516,39 @@ abstract class EVF_Form_Fields_Upload extends EVF_Form_Fields {
 	}
 
 	/**
+	 * Get the custom user defined file name
+	 *
+	 * @param array $field Field data.
+	 */
+	public function custom_file_name( $field ) {
+		$lbl  = $this->field_element(
+			'label',
+			$field,
+			array(
+				'slug'    => 'custom_file_name',
+				'value'   => esc_html__( 'Custom File Name', 'everest-forms' ),
+				'tooltip' => esc_html__( 'Enter text to be displayed as file name.', 'everest-forms' ),
+			),
+			false
+		);
+		$fld  = $this->field_element(
+			'text',
+			$field,
+			array(
+				'slug'  => 'custom_file_name',
+				'value' => ! empty( $field['custom_file_name'] ) ? $field['custom_file_name'] : '',
+			),
+			false
+		);
+		$args = array(
+			'slug'    => 'custom_file_name',
+			'content' => $lbl . $fld,
+		);
+
+		$this->field_element( 'row', $field, $args );
+	}
+
+	/**
 	 * Limit message field option.
 	 *
 	 * @param array $field Field data.
@@ -656,6 +690,38 @@ abstract class EVF_Form_Fields_Upload extends EVF_Form_Fields {
 		$entry_id = false;
 		$uploads  = wp_upload_dir();
 
+		if ( 'evffl-display-popup' === $context ) {
+			foreach ( $form_data['form_fields'] as $fields_data ) {
+				if ( $field_val['meta-key'] === $fields_data['meta-key'] ) {
+					if ( 'image-upload' === $fields_data['type'] ) {
+						$val = '';
+						foreach ( $field_val['field_value']['value_raw'] as $key => $value ) {
+							$val .= '<a href="' . esc_url( $value['value'] ) . '" target="_blank"><img src="' . esc_url( $value['value'] ) . '" style="width:200px;" /></a>';
+						}
+						return $val;
+					}
+					if ( 'file-upload' === $fields_data['type'] ) {
+						$count = count( $field_val['field_value']['value_raw'] );
+						$val   = '';
+						if ( $count > 1 ) {
+							foreach ( $field_val['field_value']['value_raw'] as $key => $value ) {
+								if ( 1 === $count ) {
+									$val .= '<a href="' . esc_url( $value['value'] ) . '" target="_blank">' . $value['name'] . '</a>';
+								} else {
+									$val .= '<a href="' . esc_url( $value['value'] ) . '" target="_blank">' . $value['name'] . '</a>, ';
+
+								}
+								--$count;
+							}
+						} else {
+							$val .= '<a href="' . esc_url( $field_val['value'] ) . '" target="_blank">' . $field_val['field_value']['value_raw'][0]['name'] . '</a>';
+						}
+						return $val;
+					}
+				}
+			}
+		}
+
 		if ( isset( $_GET['view-entry'] ) && 'entry-single' === $context ) { // phpcs:ignore WordPress.Security.NonceVerification
 			$entry_id = absint( $_GET['view-entry'] ); // phpcs:ignore WordPress.Security.NonceVerification
 			$meta_key = array_search( $val, $form_data, true );
@@ -694,8 +760,12 @@ abstract class EVF_Form_Fields_Upload extends EVF_Form_Fields {
 							$output[ $meta_key ][] = esc_url( $file['value'] );
 						} elseif ( 'image-upload' === $field['type'] ) {
 							if ( 'email-html' === $context ) {
-								$output[ $meta_key ][] = sprintf(
-									'<a href="%1$s" rel="noopener noreferrer" target="_blank"><img src="%1$s" style="width:200px;" /></a>',
+								$output[ $meta_key ][] = apply_filters(
+									'everest_forms_image_value',
+									sprintf(
+										'<a href="%1$s" rel="noopener noreferrer" target="_blank"><img src="%1$s" style="width:200px;" /></a>',
+										esc_url( $file['value'] )
+									),
 									esc_url( $file['value'] )
 								);
 							} elseif ( 'entry-single' === $context ) {
