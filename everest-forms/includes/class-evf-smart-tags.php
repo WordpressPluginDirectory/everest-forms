@@ -452,11 +452,12 @@ class EVF_Smart_Tags {
 						if ( is_array( $meta ) && ! empty( $meta[1][0] ) ) {
 							$key = $meta[1][0];
 
-							$args  = array(
+							$args = array(
 								'post_type'      => 'any',
 								'meta_key'       => $key,
 								'posts_per_page' => -1,
 							);
+
 							$query = new WP_Query( $args );
 
 							if ( $query->have_posts() ) {
@@ -465,8 +466,13 @@ class EVF_Smart_Tags {
 									$post_id = get_the_ID();
 								}
 							}
-							$value = get_post_meta( $post_id, $key, true );
 
+							/**
+							 * get_queried_object_id() is used to get current page id.
+							 *
+							 * @since 3.0.4
+							 */
+							$value   = get_post_meta( $post_id, $key, true );
 							$content = str_replace( '{' . $tag . '}', wp_kses_post( $value ), $content );
 						} else {
 							$content = str_replace( '{' . $tag . '}', '', $content );
